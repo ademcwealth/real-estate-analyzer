@@ -118,6 +118,18 @@ export interface AirbnbArbitrageResults {
   profitabilityReasons: string[];
 }
 
+export interface SaleRecord {
+  date: string;
+  price: number;
+  type?: string;
+}
+
+export interface SalesHistoryResult {
+  sales: SaleRecord[];
+  hdEstimate: number | null;
+  address: string;
+}
+
 export interface FixAndFlipResults {
   downPayment: number;
   mortgage: number;
