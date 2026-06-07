@@ -6,6 +6,7 @@ import PropertyCard from "@/components/PropertyCard";
 import ScenarioTabs from "@/components/ScenarioTabs";
 import RentalComps from "@/components/RentalComps";
 import STRComps from "@/components/STRComps";
+import SalesHistory from "@/components/SalesHistory";
 
 const PLACEHOLDER_URL = "https://www.realtor.ca/real-estate/27165448/10709-74-avenue-nw-edmonton";
 
@@ -245,6 +246,9 @@ export default function Home() {
             </div>
 
             <PropertyCard property={property} />
+
+            {/* HonestDoor sales history */}
+            <SalesHistory property={property} />
 
             {/* Long-term rental comps */}
             <div className="mb-4">
