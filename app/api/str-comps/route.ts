@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const CHROME_PATH =
-  process.env.CHROME_PATH ??
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+import { launchBrowser } from "@/lib/puppeteer";
 
 export interface StrComp {
   title: string;
@@ -59,13 +57,7 @@ export async function GET(req: NextRequest) {
     const swLat = parseFloat(searchParams.get("swLat") || "53.40");
     const swLng = parseFloat(searchParams.get("swLng") || "-113.70");
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const puppeteer = require("puppeteer-core");
-    browser = await puppeteer.launch({
-      executablePath: CHROME_PATH,
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    browser = await launchBrowser();
 
     const page = await browser.newPage();
     await page.setUserAgent(
