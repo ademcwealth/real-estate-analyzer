@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { PropertyListing, FixAndFlipInputs } from "@/types";
 import { calcFixAndFlip } from "@/lib/calculations";
-import { getDefaultMortgageInputs, getDefaultExpenses, EDMONTON_DEFAULTS } from "@/lib/defaults";
+import { getDefaultMortgageInputs, getDefaultExpenses, FLIP_DEFAULTS } from "@/lib/defaults";
 import MetricCard from "@/components/ui/MetricCard";
 import RuleCheck from "@/components/ui/RuleCheck";
 import InputField from "@/components/ui/InputField";
@@ -17,17 +17,17 @@ function fmt(n: number) {
 function fmtPct(n: number) { return `${(n * 100).toFixed(1)}%`; }
 
 export default function FixAndFlip({ property }: { property: PropertyListing }) {
-  const defaultARV = Math.round(property.price * EDMONTON_DEFAULTS.flipARVMultiplier);
+  const defaultARV = Math.round(property.price * FLIP_DEFAULTS.flipARVMultiplier);
 
   const [inputs, setInputs] = useState<FixAndFlipInputs>({
     mortgage: {
       ...getDefaultMortgageInputs(property.price),
-      repairCosts: EDMONTON_DEFAULTS.flipRepairCosts,
-      interestRate: 0.08, // Hard money / private lending rates for flips
+      repairCosts: FLIP_DEFAULTS.flipRepairCosts,
+      interestRate: 0.08,
       loanTermYears: 1,
     },
     expenses: (() => {
-      const e = getDefaultExpenses(property.price, property.assessedValue);
+      const e = getDefaultExpenses(property.price, property.assessedValue, property.city, property.province);
       return {
         monthlyTaxes: e.monthlyTaxes,
         monthlyInsurance: e.monthlyInsurance,
@@ -43,7 +43,7 @@ export default function FixAndFlip({ property }: { property: PropertyListing }) 
       };
     })(),
     afterRepairValue: defaultARV,
-    monthsUntilFlip: EDMONTON_DEFAULTS.flipMonthsHolding,
+    monthsUntilFlip: FLIP_DEFAULTS.flipMonthsHolding,
   });
   const [showInputs, setShowInputs] = useState(false);
 
@@ -130,7 +130,7 @@ export default function FixAndFlip({ property }: { property: PropertyListing }) 
         </div>
       </div>
 
-      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors">
+      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors print:hidden">
         {showInputs ? "▲ Hide" : "▼ Adjust"} Assumptions
       </button>
 
@@ -150,7 +150,7 @@ export default function FixAndFlip({ property }: { property: PropertyListing }) 
             <SectionHeader title="Flip Strategy" />
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <InputField label="After Repair Value (ARV)" value={inputs.afterRepairValue} onChange={v => setInputs(p => ({ ...p, afterRepairValue: v }))} prefix="$" step={5000} hint="Estimated sale price after renovation" />
-              <InputField label="Months Until Flip" value={inputs.monthsUntilFlip} onChange={v => setInputs(p => ({ ...p, monthsUntilFlip: v }))} step={1} hint="Typical Edmonton flip: 3–9 months" />
+              <InputField label="Months Until Flip" value={inputs.monthsUntilFlip} onChange={v => setInputs(p => ({ ...p, monthsUntilFlip: v }))} step={1} hint="Typical flip: 3–9 months" />
             </div>
           </div>
           <div>

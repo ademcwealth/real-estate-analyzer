@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const CHROME_PATH =
+  process.env.CHROME_PATH ??
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 // Listing types that represent entire rentable units (not rooms or shared spaces)

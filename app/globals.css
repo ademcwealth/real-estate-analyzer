@@ -24,3 +24,26 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  @page {
+    margin: 1.5cm;
+    size: A4 portrait;
+  }
+
+  /* Reset background colors so the page doesn't bleed ink */
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 10pt;
+  }
+
+  /* Colour-coded verdicts need explicit print colours */
+  .bg-emerald-600 { background-color: #059669 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .bg-red-600     { background-color: #dc2626 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* Each scenario starts on a new page */
+  .print-scenario + .print-scenario {
+    break-before: page;
+  }
+}

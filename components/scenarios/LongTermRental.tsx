@@ -18,20 +18,20 @@ function fmt(n: number, isNeg = false) {
 function fmtPct(n: number) { return `${(n * 100).toFixed(1)}%`; }
 
 export default function LongTermRental({ property, externalRent }: { property: PropertyListing; externalRent?: number | null }) {
-  const defaultRent = getDefaultRent(property.bedrooms);
+  const defaultRent = getDefaultRent(property.bedrooms, property.city, property.province);
 
   const [inputs, setInputs] = useState<LongTermRentalInputs>({
     mortgage: getDefaultMortgageInputs(property.price),
-    expenses: getDefaultExpenses(property.price, property.assessedValue),
+    expenses: getDefaultExpenses(property.price, property.assessedValue, property.city, property.province),
     monthlyRents: [defaultRent],
     laundryRevenue: 0,
     additionalRevenue: 0,
   });
 
-  // Apply market rent from RentalComps whenever it changes
+  // Apply market rent from RentalComps whenever it changes — preserve unit count
   useEffect(() => {
     if (externalRent) {
-      setInputs(p => ({ ...p, monthlyRents: [externalRent] }));
+      setInputs(p => ({ ...p, monthlyRents: p.monthlyRents.map(() => externalRent) }));
     }
   }, [externalRent]);
 
@@ -71,7 +71,7 @@ export default function LongTermRental({ property, externalRent }: { property: P
       {/* Key Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard label="Monthly Cashflow" value={fmt(results.monthlyCashflow)} sub="after all expenses + mortgage" sentiment={cashflowSentiment} large />
-        <MetricCard label="CAP Rate" value={fmtPct(results.capRate)} sub="target ≥ 6% in Edmonton" sentiment={capSentiment} />
+        <MetricCard label="CAP Rate" value={fmtPct(results.capRate)} sub="target ≥ 5–6% in Canada" sentiment={capSentiment} />
         <MetricCard label="Cash-on-Cash" value={fmtPct(results.cashOnCashReturn)} sub="target ≥ 8%" sentiment={cocSentiment} />
         <MetricCard label="Capital Needed" value={fmt(results.totalCapitalNeeded)} sub={`Down + closing + repairs`} sentiment="neutral" />
       </div>
@@ -125,7 +125,7 @@ export default function LongTermRental({ property, externalRent }: { property: P
       </div>
 
       {/* Adjust Inputs Toggle */}
-      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors">
+      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors print:hidden">
         {showInputs ? "▲ Hide" : "▼ Adjust"} Assumptions
       </button>
 
@@ -163,7 +163,7 @@ export default function LongTermRental({ property, externalRent }: { property: P
           <div>
             <SectionHeader title="Monthly Fixed Expenses" hint="Enter $0 if included in rent or not applicable" />
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <InputField label="Property Tax" value={inputs.expenses.monthlyTaxes} onChange={v => setExpense("monthlyTaxes", v)} prefix="$" step={25} hint="Edmonton ~0.9% of value/yr" />
+              <InputField label="Property Tax" value={inputs.expenses.monthlyTaxes} onChange={v => setExpense("monthlyTaxes", v)} prefix="$" step={25} hint="Based on local mill rate" />
               <InputField label="Insurance" value={inputs.expenses.monthlyInsurance} onChange={v => setExpense("monthlyInsurance", v)} prefix="$" step={25} />
               <InputField label="HOA / Condo Fees" value={inputs.expenses.monthlyHOA} onChange={v => setExpense("monthlyHOA", v)} prefix="$" step={25} />
               <InputField label="Water/Sewer" value={inputs.expenses.monthlyWaterSewer} onChange={v => setExpense("monthlyWaterSewer", v)} prefix="$" step={10} />
@@ -175,7 +175,7 @@ export default function LongTermRental({ property, externalRent }: { property: P
             <SectionHeader title="Variable Expense Rates" hint="Calculated as % of gross monthly income" />
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <InputField label="Maintenance" value={inputs.expenses.maintenancePercent} onChange={v => setExpense("maintenancePercent", v)} isPercent suffix="%" hint="Typically 8–10%" />
-              <InputField label="Vacancy" value={inputs.expenses.vacancyPercent} onChange={v => setExpense("vacancyPercent", v)} isPercent suffix="%" hint="Edmonton ~5–8%" />
+              <InputField label="Vacancy" value={inputs.expenses.vacancyPercent} onChange={v => setExpense("vacancyPercent", v)} isPercent suffix="%" hint="Typically 5–8%" />
               <InputField label="Property Mgmt" value={inputs.expenses.managementPercent} onChange={v => setExpense("managementPercent", v)} isPercent suffix="%" hint="8–10% if using a manager" />
             </div>
           </div>

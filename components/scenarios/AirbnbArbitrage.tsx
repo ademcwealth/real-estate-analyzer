@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { PropertyListing, AirbnbArbitrageInputs } from "@/types";
 import { calcAirbnbArbitrage } from "@/lib/calculations";
-import { EDMONTON_DEFAULTS, getDefaultRent } from "@/lib/defaults";
+import { getCityDefaults, getDefaultRent } from "@/lib/defaults";
 import MetricCard from "@/components/ui/MetricCard";
 import RuleCheck from "@/components/ui/RuleCheck";
 import InputField from "@/components/ui/InputField";
@@ -17,11 +17,12 @@ function fmt(n: number) {
 function fmtPct(n: number) { return `${(n * 100).toFixed(0)}%`; }
 
 export default function AirbnbArbitrage({ property, externalRent }: { property: PropertyListing; externalRent?: number | null }) {
-  const defaultLandlordRent = getDefaultRent(property.bedrooms);
+  const cityDef = getCityDefaults(property.city, property.province);
+  const defaultLandlordRent = getDefaultRent(property.bedrooms, property.city, property.province);
 
   const [inputs, setInputs] = useState<AirbnbArbitrageInputs>({
     expenses: {
-      monthlyTaxes: 200,
+      monthlyTaxes: 0,
       monthlyInsurance: 0,
       monthlyTrash: 0,
       monthlyGasElectric: 120,
@@ -31,18 +32,18 @@ export default function AirbnbArbitrage({ property, externalRent }: { property: 
       monthlyHeat: 0,
       monthlyLawnSnow: 0,
       monthlyPhoneBill: 0,
-      monthlyExtra: 800, // cleaner
+      monthlyExtra: 800,
       maintenancePercent: 0,
       vacancyPercent: 0,
       managementPercent: 0,
     },
-    damageDeposit: EDMONTON_DEFAULTS.arbDamageDeposit,
-    repairCosts: EDMONTON_DEFAULTS.arbRepairCosts,
-    furnitureCost: EDMONTON_DEFAULTS.arbFurnitureCost,
+    damageDeposit: 2000,
+    repairCosts: 1000,
+    furnitureCost: 4000,
     monthlyRentToLandlord: defaultLandlordRent,
-    dailyRate: EDMONTON_DEFAULTS.airbnbDailyRate,
-    dailyCleaningFee: EDMONTON_DEFAULTS.airbnbCleaningFee,
-    occupiedNightsPerMonth: EDMONTON_DEFAULTS.airbnbNightsPerMonth,
+    dailyRate: cityDef.airbnbDailyRate,
+    dailyCleaningFee: cityDef.airbnbCleaningFee,
+    occupiedNightsPerMonth: cityDef.airbnbNightsPerMonth,
     additionalGuestFee: 0,
   });
   const [showInputs, setShowInputs] = useState(false);
@@ -68,7 +69,7 @@ export default function AirbnbArbitrage({ property, externalRent }: { property: 
       {/* Context Banner */}
       <div className="bg-violet-50 border border-violet-200 rounded-xl p-4">
         <p className="text-sm text-violet-800 font-semibold">💡 Airbnb Arbitrage — No Property Purchase Required</p>
-        <p className="text-sm text-violet-600 mt-1">You lease this property from the landlord and relist it on Airbnb at a higher nightly rate. Startup capital is low, but you must verify the landlord permits subletting and check Edmonton&apos;s short-term rental bylaws.</p>
+        <p className="text-sm text-violet-600 mt-1">You lease this property from the landlord and relist it on Airbnb at a higher nightly rate. Startup capital is low, but you must verify the landlord permits subletting and check {property.city}&apos;s short-term rental bylaws.</p>
       </div>
 
       <div className={`rounded-2xl p-5 flex items-center gap-4 ${results.isProfitable ? "bg-emerald-600" : "bg-red-600"}`}>
@@ -126,9 +127,9 @@ export default function AirbnbArbitrage({ property, externalRent }: { property: 
         <h3 className="text-sm font-bold text-amber-800 mb-2">⚠️ Important Considerations</h3>
         <ul className="text-sm text-amber-700 space-y-1">
           <li>→ Verify the landlord explicitly permits short-term subletting in the lease</li>
-          <li>→ Edmonton requires short-term rental operators to hold a business licence</li>
+          <li>→ {property.city} may require short-term rental operators to hold a business licence — verify locally</li>
           <li>→ If renting a condo, check strata bylaws — many prohibit short-term rentals</li>
-          <li>→ Seasonality risk: Edmonton Airbnb peaks July–Sept, slowest Nov–Feb</li>
+          <li>→ Seasonality risk: most Canadian markets peak in summer and slow in winter</li>
         </ul>
       </div>
 
@@ -143,7 +144,7 @@ export default function AirbnbArbitrage({ property, externalRent }: { property: 
         </ul>
       </div>
 
-      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors">
+      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors print:hidden">
         {showInputs ? "▲ Hide" : "▼ Adjust"} Assumptions
       </button>
 
@@ -161,7 +162,7 @@ export default function AirbnbArbitrage({ property, externalRent }: { property: 
             <SectionHeader title="Rent & Airbnb Revenue" />
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <InputField label="Monthly Rent to Landlord" value={inputs.monthlyRentToLandlord} onChange={v => setInputs(p => ({ ...p, monthlyRentToLandlord: v }))} prefix="$" step={50} hint="Your lease amount" />
-              <InputField label="Nightly Rate on Airbnb" value={inputs.dailyRate} onChange={v => setInputs(p => ({ ...p, dailyRate: v }))} prefix="$" step={10} hint="Check Edmonton comps" />
+              <InputField label="Nightly Rate on Airbnb" value={inputs.dailyRate} onChange={v => setInputs(p => ({ ...p, dailyRate: v }))} prefix="$" step={10} hint="Check local Airbnb comps" />
               <InputField label="Cleaning Fee" value={inputs.dailyCleaningFee} onChange={v => setInputs(p => ({ ...p, dailyCleaningFee: v }))} prefix="$" step={5} hint="Per stay" />
               <InputField label="Nights Booked/Month" value={inputs.occupiedNightsPerMonth} onChange={v => setInputs(p => ({ ...p, occupiedNightsPerMonth: v }))} step={1} hint="18 = 60% occupancy" />
             </div>

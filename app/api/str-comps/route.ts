@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const CHROME_PATH =
+  process.env.CHROME_PATH ??
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 export interface StrComp {
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest) {
     await page.goto(searchUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise((r) => setTimeout(r, 2000));
 
-    const rawListings: StrComp[] = await page.evaluate(() => {
+    const niobeListings: StrComp[] = await page.evaluate(() => {
       const scripts = Array.from(document.querySelectorAll("script"));
       for (const s of scripts) {
         const txt = s.textContent || "";
@@ -108,11 +109,10 @@ export async function GET(req: NextRequest) {
               let nightlyRate: number | null = null;
               try {
                 type PriceItem = { description?: string };
-                type PriceGroup = { items?: PriceItem[] };
-                const items: PriceItem[] = (
-                  (r.structuredDisplayPrice as Record<string, unknown>)
-                    ?.explanationData as Record<string, unknown>)
-                  ?.priceDetails?.[0]?.items || ([] as PriceItem[]);
+                const priceDetails = ((r.structuredDisplayPrice as Record<string, unknown>)
+                  ?.explanationData as Record<string, unknown>)
+                  ?.priceDetails as Array<{ items?: PriceItem[] }> | undefined;
+                const items: PriceItem[] = priceDetails?.[0]?.items || [];
                 const nightItem = items.find(
                   (i: PriceItem) => i.description?.includes("night")
                 );
@@ -155,14 +155,45 @@ export async function GET(req: NextRequest) {
       return [];
     });
 
-    if (rawListings.length === 0) {
+    // Fallback: if niobeClientData returned nothing, scrape visible price text from listing cards
+    let listings: StrComp[] = niobeListings;
+    if (listings.length === 0) {
+      const domListings: StrComp[] = await page.evaluate(() => {
+        const results: { title: string; subtitle: string; nightlyRate: number | null; beds: number | null; baths: number | null; rating: number | null; reviews: number }[] = [];
+        // Each listing card is a <div> containing an aria-label with the price
+        const cards = Array.from(document.querySelectorAll('[data-testid="card-container"], [itemprop="itemListElement"]'));
+        for (const card of cards) {
+          const text = card.textContent || "";
+          // Price: "$123 per night" or "$123 / night" or "$123/night"
+          const priceM = text.match(/\$([\d,]+)\s*(?:per|\/)\s*night/i) || text.match(/\$([\d,]+)\s*night/i);
+          const nightlyRate = priceM ? parseFloat(priceM[1].replace(",", "")) : null;
+          if (!nightlyRate || nightlyRate < 30) continue;
+          // Rating: "4.85 (123 reviews)" or "4.85"
+          const ratingM = text.match(/([\d.]{3,4})\s*\((\d+)\)/);
+          const titleEl = card.querySelector("div[data-testid='listing-card-title'], [id*='title']");
+          results.push({
+            title: titleEl?.textContent?.trim() || "",
+            subtitle: "",
+            nightlyRate,
+            beds: null,
+            baths: null,
+            rating: ratingM ? parseFloat(ratingM[1]) : null,
+            reviews: ratingM ? parseInt(ratingM[2]) : 0,
+          });
+        }
+        return results;
+      });
+      listings = domListings.filter((l) => l.nightlyRate && l.nightlyRate > 50) as StrComp[];
+    }
+
+    if (listings.length === 0) {
       return NextResponse.json(
         { error: `No Airbnb listings found for ${beds}-bed in ${city}. Airbnb may be blocking the request — try again.` },
         { status: 404 }
       );
     }
 
-    const rates = rawListings.map((l) => l.nightlyRate).filter(Boolean) as number[];
+    const rates = listings.map((l) => l.nightlyRate).filter(Boolean) as number[];
     const avg = Math.round(rates.reduce((a, b) => a + b, 0) / rates.length);
     const med = calcMedian(rates);
 
@@ -170,17 +201,17 @@ export async function GET(req: NextRequest) {
     const OCCUPANCY_NIGHTS = 20;
     const estimatedMonthlyRevenue = Math.round(med * OCCUPANCY_NIGHTS);
 
-    const ratings = rawListings.map((l) => l.rating).filter(Boolean) as number[];
+    const ratings = listings.map((l) => l.rating).filter(Boolean) as number[];
     const avgRating =
       ratings.length > 0
         ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 100) / 100
         : 0;
     const avgReviews = Math.round(
-      rawListings.reduce((a, b) => a + b.reviews, 0) / rawListings.length
+      listings.reduce((a, b) => a + b.reviews, 0) / listings.length
     );
 
     return NextResponse.json({
-      comps: rawListings.slice(0, 30),
+      comps: listings.slice(0, 30),
       stats: {
         count: rates.length,
         avgNightly: avg,

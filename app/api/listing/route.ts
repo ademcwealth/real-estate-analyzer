@@ -3,6 +3,7 @@ import type { PropertyListing } from "@/types";
 import { fetchEdmontonAssessedValue } from "@/lib/edmonton-assessment";
 
 const CHROME_PATH =
+  process.env.CHROME_PATH ??
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 function extractListingId(url: string): string | null {

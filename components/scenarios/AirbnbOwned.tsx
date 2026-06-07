@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { PropertyListing, AirbnbOwnedInputs } from "@/types";
 import { calcAirbnbOwned } from "@/lib/calculations";
-import { getDefaultMortgageInputs, getDefaultExpenses, EDMONTON_DEFAULTS } from "@/lib/defaults";
+import { getDefaultMortgageInputs, getDefaultExpenses, getCityDefaults } from "@/lib/defaults";
 import MetricCard from "@/components/ui/MetricCard";
 import RuleCheck from "@/components/ui/RuleCheck";
 import InputField from "@/components/ui/InputField";
@@ -17,15 +17,16 @@ function fmt(n: number) {
 function fmtPct(n: number) { return `${(n * 100).toFixed(1)}%`; }
 
 export default function AirbnbOwned({ property, externalRent, externalNightly }: { property: PropertyListing; externalRent?: number | null; externalNightly?: number | null }) {
+  const cityDef = getCityDefaults(property.city, property.province);
   const [inputs, setInputs] = useState<AirbnbOwnedInputs>({
     mortgage: getDefaultMortgageInputs(property.price),
-    expenses: getDefaultExpenses(property.price, property.assessedValue),
-    furnitureCost: EDMONTON_DEFAULTS.airbnbFurnitureCost,
-    dailyRate: EDMONTON_DEFAULTS.airbnbDailyRate,
-    dailyCleaningFee: EDMONTON_DEFAULTS.airbnbCleaningFee,
-    occupiedNightsPerMonth: EDMONTON_DEFAULTS.airbnbNightsPerMonth,
+    expenses: getDefaultExpenses(property.price, property.assessedValue, property.city, property.province),
+    furnitureCost: cityDef.airbnbFurnitureCost,
+    dailyRate: cityDef.airbnbDailyRate,
+    dailyCleaningFee: cityDef.airbnbCleaningFee,
+    occupiedNightsPerMonth: cityDef.airbnbNightsPerMonth,
     additionalGuestFee: 0,
-    cleanerPercent: EDMONTON_DEFAULTS.airbnbCleanerPercent,
+    cleanerPercent: cityDef.airbnbCleanerPercent,
   });
   const [showInputs, setShowInputs] = useState(false);
 
@@ -39,10 +40,10 @@ export default function AirbnbOwned({ property, externalRent, externalNightly }:
   // Fallback: back-calculate from LTR market rent if no Airbnb comp available
   useEffect(() => {
     if (externalRent && !externalNightly) {
-      const suggestedNightly = Math.round(externalRent / (EDMONTON_DEFAULTS.airbnbNightsPerMonth * 0.7));
+      const suggestedNightly = Math.round(externalRent / (cityDef.airbnbNightsPerMonth * 0.7));
       setInputs(p => ({ ...p, dailyRate: suggestedNightly }));
     }
-  }, [externalRent, externalNightly]);
+  }, [externalRent, externalNightly, cityDef.airbnbNightsPerMonth]);
 
   const results = calcAirbnbOwned(inputs);
 
@@ -86,7 +87,7 @@ export default function AirbnbOwned({ property, externalRent, externalNightly }:
           <div><p className="text-xs opacity-70">Nights/Month</p><p className="font-bold">{inputs.occupiedNightsPerMonth} ({Math.round(inputs.occupiedNightsPerMonth / 30 * 100)}% occupancy)</p></div>
           <div><p className="text-xs opacity-70">Gross Revenue</p><p className="font-bold">{fmt(monthlyRevenue)}/mo</p></div>
         </div>
-        <p className="text-xs text-blue-600 mt-3 opacity-80">Annual projected revenue: {fmt(annualRevenue)} — verify against AirDNA or similar tool for Edmonton comps</p>
+        <p className="text-xs text-blue-600 mt-3 opacity-80">Annual projected revenue: {fmt(annualRevenue)} — verify against AirDNA or similar tool for {property.city} comps</p>
       </div>
 
       <div className="space-y-2">
@@ -132,7 +133,7 @@ export default function AirbnbOwned({ property, externalRent, externalNightly }:
         </div>
       </div>
 
-      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors">
+      <button onClick={() => setShowInputs(v => !v)} className="w-full text-sm text-blue-600 font-semibold py-2 border border-blue-200 rounded-xl bg-blue-50 hover:bg-blue-100 transition-colors print:hidden">
         {showInputs ? "▲ Hide" : "▼ Adjust"} Assumptions
       </button>
 

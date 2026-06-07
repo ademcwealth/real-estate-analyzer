@@ -20,6 +20,26 @@ function stars(r: number | null) {
   return "★ " + r.toFixed(2);
 }
 
+// Edmonton fallback bbox
+const EDMONTON_BBOX = { neLat: "53.716", neLng: "-113.316", swLat: "53.395", swLng: "-113.715" };
+
+async function geocodeCityBbox(city: string): Promise<typeof EDMONTON_BBOX> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1&countrycodes=ca`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "RE-Analyzer/1.0 (real-estate-investment-tool)" },
+      signal: AbortSignal.timeout(5000),
+    });
+    const results = await res.json();
+    const bb: string[] | undefined = results?.[0]?.boundingbox;
+    if (!bb || bb.length < 4) return EDMONTON_BBOX;
+    // Nominatim boundingbox: [minLat, maxLat, minLng, maxLng]
+    return { swLat: bb[0], neLat: bb[1], swLng: bb[2], neLng: bb[3] };
+  } catch {
+    return EDMONTON_BBOX;
+  }
+}
+
 export default function STRComps({ property, onUseRevenue }: Props) {
   const [data, setData] = useState<StrCompsResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -28,11 +48,16 @@ export default function STRComps({ property, onUseRevenue }: Props) {
   const [beds, setBeds] = useState(property.bedrooms);
   const hasFetched = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const bboxRef = useRef<typeof EDMONTON_BBOX | null>(null);
 
   useEffect(() => {
     if (hasFetched.current) return;
     hasFetched.current = true;
-    fetchComps(beds);
+    // Geocode city bbox first, then fetch comps with real coordinates
+    geocodeCityBbox(property.city).then(bbox => {
+      bboxRef.current = bbox;
+      fetchComps(beds);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -44,13 +69,13 @@ export default function STRComps({ property, onUseRevenue }: Props) {
     setError(null);
 
     try {
-      // Build a ±0.15° bounding box around the property's city centre for localised results
+      const bbox = bboxRef.current ?? EDMONTON_BBOX;
       const params = new URLSearchParams({
         beds: String(targetBeds),
         city: property.city,
         province: property.province || "Alberta",
-        neLat: "53.65", neLng: "-113.30",
-        swLat: "53.40", swLng: "-113.70",
+        neLat: bbox.neLat, neLng: bbox.neLng,
+        swLat: bbox.swLat, swLng: bbox.swLng,
       });
       const res = await fetch(`/api/str-comps?${params}`, { signal: controller.signal });
       const text = await res.text();

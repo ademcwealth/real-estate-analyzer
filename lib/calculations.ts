@@ -93,7 +93,7 @@ export function calcLongTermRental(
   } else if (capRate >= 0.04) {
     profitabilityReasons.push(`Acceptable CAP rate of ${(capRate * 100).toFixed(1)}% (below 6% ideal)`);
   } else {
-    profitabilityReasons.push(`Weak CAP rate of ${(capRate * 100).toFixed(1)}% (below 4% is poor for Edmonton)`);
+    profitabilityReasons.push(`Weak CAP rate of ${(capRate * 100).toFixed(1)}% (below 4% is generally poor for Canadian investment properties)`);
   }
   if (meets1PercentRule) {
     profitabilityReasons.push("Passes the 1% rule — rent ≥ 1% of purchase price");
@@ -263,7 +263,7 @@ export function calcAirbnbArbitrage(inputs: AirbnbArbitrageInputs): AirbnbArbitr
     profitabilityReasons.push(`Cash-on-cash of ${(cashOnCashReturn * 100).toFixed(0)}% on $${totalCapitalNeeded.toLocaleString()} startup capital`);
   }
 
-  profitabilityReasons.push(`Note: Verify landlord permits subletting and check local short-term rental bylaws for ${inputs.expenses.monthlyExtra >= 0 ? 'your city' : 'Edmonton'}`);
+  profitabilityReasons.push("Note: Verify landlord permits subletting and check local short-term rental bylaws for your city");
 
   return {
     totalCapitalNeeded,

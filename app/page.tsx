@@ -85,7 +85,7 @@ export default function Home() {
             <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-sm">RE</div>
             <div>
               <h1 className="font-bold text-slate-900 leading-tight text-base">Canadian RE Analyzer</h1>
-              <p className="text-xs text-slate-400">Edmonton & Alberta market defaults</p>
+              <p className="text-xs text-slate-400">Canadian real estate investment analysis</p>
             </div>
           </div>
           <span className="text-xs bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-1 font-semibold">For educational use only</span>
@@ -232,34 +232,47 @@ export default function Home() {
         {property && (
           <div>
             {warning && (
-              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 print:hidden">
                 ⚠️ {warning}
               </div>
             )}
-            <div className="flex items-center justify-between mb-4">
+
+            {/* Toolbar — hidden when printing */}
+            <div className="flex items-center justify-between mb-4 print:hidden">
               <button
                 onClick={() => { setProperty(null); setUrl(""); setError(null); setWarning(null); setAppliedRent(null); setAppliedNightly(null); }}
                 className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1"
               >
                 ← Analyze another property
               </button>
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-2 text-sm font-semibold text-slate-600 border border-slate-300 rounded-xl px-4 py-2 hover:bg-slate-50 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                Save as PDF
+              </button>
             </div>
 
             <PropertyCard property={property} />
 
-            {/* HonestDoor sales history */}
-            <SalesHistory property={property} />
+            {/* HonestDoor sales history — hidden when printing */}
+            <div className="print:hidden">
+              <SalesHistory property={property} />
+            </div>
 
-            {/* Long-term rental comps */}
-            <div className="mb-4">
+            {/* Long-term rental comps — hidden when printing */}
+            <div className="mb-4 print:hidden">
               <RentalComps
                 property={property}
                 onUseRent={(rent) => setAppliedRent(rent)}
               />
             </div>
 
-            {/* Short-term rental (Airbnb) comps */}
-            <div className="mb-6">
+            {/* Short-term rental (Airbnb) comps — hidden when printing */}
+            <div className="mb-6 print:hidden">
               <STRComps
                 property={property}
                 onUseRevenue={(_monthlyRevenue, nightlyRate) => setAppliedNightly(nightlyRate)}
@@ -273,7 +286,7 @@ export default function Home() {
               onClearRent={() => setAppliedRent(null)}
             />
 
-            <div className="mt-8 bg-slate-100 rounded-xl p-4 text-xs text-slate-500 text-center">
+            <div className="mt-8 bg-slate-100 rounded-xl p-4 text-xs text-slate-500 text-center print:mt-4">
               <strong>Disclaimer:</strong> This tool uses estimated market defaults and should not be relied on as professional financial or investment advice.
               Always verify rent estimates, tax rates, and market conditions with a licensed real estate professional before making investment decisions.
             </div>

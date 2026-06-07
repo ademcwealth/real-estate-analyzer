@@ -55,8 +55,8 @@ export default function ScenarioTabs({ property, externalRent, externalNightly, 
         </div>
       )}
 
-      {/* Tab Nav */}
-      <div className="flex gap-1 mb-6 bg-slate-100 p-1 rounded-2xl overflow-x-auto">
+      {/* Tab Nav — hidden when printing */}
+      <div className="flex gap-1 mb-6 bg-slate-100 p-1 rounded-2xl overflow-x-auto print:hidden">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -74,12 +74,20 @@ export default function ScenarioTabs({ property, externalRent, externalNightly, 
         ))}
       </div>
 
-      {/* Tab Content — externalRent prop flows directly to each scenario */}
+      {/* Tab Content — inactive tabs hidden on screen, all visible when printing */}
       <div>
-        {active === "ltr" && <LongTermRental property={property} externalRent={externalRent} />}
-        {active === "airbnb" && <AirbnbOwned property={property} externalRent={externalRent} externalNightly={externalNightly} />}
-        {active === "arb" && <AirbnbArbitrage property={property} externalRent={externalRent} />}
-        {active === "flip" && <FixAndFlip property={property} />}
+        <div className={`print-scenario ${active !== "ltr" ? "hidden print:block" : ""}`}>
+          <LongTermRental property={property} externalRent={externalRent} />
+        </div>
+        <div className={`print-scenario ${active !== "airbnb" ? "hidden print:block" : ""}`}>
+          <AirbnbOwned property={property} externalRent={externalRent} externalNightly={externalNightly} />
+        </div>
+        <div className={`print-scenario ${active !== "arb" ? "hidden print:block" : ""}`}>
+          <AirbnbArbitrage property={property} externalRent={externalRent} />
+        </div>
+        <div className={`print-scenario ${active !== "flip" ? "hidden print:block" : ""}`}>
+          <FixAndFlip property={property} />
+        </div>
       </div>
     </div>
   );
