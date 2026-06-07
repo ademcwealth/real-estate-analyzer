@@ -40,6 +40,19 @@ export default function PropertyCard({ property }: { property: PropertyListing }
               Assessed: {property.assessedValue.toLocaleString("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 })}
             </p>
           )}
+          {property.annualTaxLevy && (
+            <p className="text-xs text-slate-500 mt-0.5">
+              Tax:{" "}
+              <span className="font-semibold text-slate-700">
+                {property.annualTaxLevy.toLocaleString("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 })}/yr
+              </span>
+              {" "}
+              <span className="text-slate-400">
+                ({Math.round(property.annualTaxLevy / 12).toLocaleString("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 })}/mo
+                {property.taxSource === "estimated" ? " est." : ""})
+              </span>
+            </p>
+          )}
         </div>
       </div>
       {property.description && (

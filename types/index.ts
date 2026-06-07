@@ -10,6 +10,8 @@ export interface PropertyListing {
   mlsNumber?: string;
   description?: string;
   assessedValue?: number;
+  annualTaxLevy?: number;       // actual billed tax (from dkk9-cj3x) or assessed × mill rate
+  taxSource?: "billed" | "estimated";
 }
 
 export interface MortgageInputs {

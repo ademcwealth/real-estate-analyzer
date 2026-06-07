@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { PropertyListing } from "@/types";
-import { fetchEdmontonAssessedValue } from "@/lib/edmonton-assessment";
+import { fetchEdmontonPropertyData } from "@/lib/edmonton-assessment";
 
 const CHROME_PATH =
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -166,10 +166,12 @@ export async function POST(req: NextRequest) {
   try {
     const listing = await scrapeWithPuppeteer(listingUrl);
 
-    // Enrich with actual assessed value from Edmonton Open Data (best-effort)
+    // Enrich with assessed value + tax levy from Edmonton Open Data (best-effort)
     if (listing.city.toLowerCase().includes("edmonton")) {
-      const assessedValue = await fetchEdmontonAssessedValue(listing.address);
-      if (assessedValue) listing.assessedValue = assessedValue;
+      const taxData = await fetchEdmontonPropertyData(listing.address);
+      if (taxData.assessedValue) listing.assessedValue = taxData.assessedValue;
+      if (taxData.annualTaxLevy) listing.annualTaxLevy = taxData.annualTaxLevy;
+      if (taxData.taxSource) listing.taxSource = taxData.taxSource;
     }
 
     if (listing.price === 0) {

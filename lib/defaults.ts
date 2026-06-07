@@ -6,8 +6,8 @@ export const EDMONTON_DEFAULTS = {
   downPaymentPercent: 0.20,
   closingCostsPercent: 0.02,
   loanTermYears: 25, // Standard Canadian amortization
-  propertyTaxAnnualRate: 0.009, // fallback: ~0.9% of purchase price when assessed value unavailable
-  propertyTaxMillRate: 9.4040,  // Edmonton 2025 combined mill rate (municipal + education) per $1,000 assessed
+  propertyTaxAnnualRate: 0.01014, // fallback: ~1.014% of purchase price when assessed value unavailable
+  propertyTaxMillRate: 10.14,    // Edmonton 2025 combined mill rate (municipal 7.63 + education 2.51) per $1,000 assessed
   insuranceMonthly: 175,
   maintenancePercent: 0.08,
   vacancyPercent: 0.05,
@@ -53,8 +53,10 @@ export function getDefaultMortgageInputs(purchasePrice: number): MortgageInputs 
   };
 }
 
-export function getDefaultExpenses(purchasePrice: number, assessedValue?: number): ExpenseInputs {
-  const annualTaxes = assessedValue
+export function getDefaultExpenses(purchasePrice: number, assessedValue?: number, annualTaxLevy?: number): ExpenseInputs {
+  const annualTaxes = annualTaxLevy
+    ? annualTaxLevy
+    : assessedValue
     ? assessedValue * (EDMONTON_DEFAULTS.propertyTaxMillRate / 1000)
     : purchasePrice * EDMONTON_DEFAULTS.propertyTaxAnnualRate;
   return {
