@@ -8,6 +8,7 @@ import RentalComps from "@/components/RentalComps";
 import STRComps from "@/components/STRComps";
 import SalesHistory from "@/components/SalesHistory";
 import RecentProperties, { saveToHistory } from "@/components/RecentProperties";
+import CompareView from "@/components/CompareView";
 
 const PLACEHOLDER_URL = "https://www.realtor.ca/real-estate/27165448/10709-74-avenue-nw-edmonton";
 
@@ -31,6 +32,11 @@ export default function Home() {
   const [manualProp, setManualProp] = useState<PropertyListing>(EMPTY_PROPERTY);
   const [appliedRent, setAppliedRent] = useState<number | null>(null);
   const [appliedNightly, setAppliedNightly] = useState<number | null>(null);
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareUrl, setCompareUrl] = useState("");
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+  const [compareProperty, setCompareProperty] = useState<PropertyListing | null>(null);
 
   async function handleAnalyze(e: React.FormEvent) {
     e.preventDefault();
@@ -68,6 +74,38 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleCompare(e: React.FormEvent) {
+    e.preventDefault();
+    if (!compareUrl.trim()) return;
+    setCompareLoading(true);
+    setCompareError(null);
+    try {
+      const res = await fetch("/api/listing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: compareUrl.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.listing) {
+        setCompareProperty(data.listing);
+        saveToHistory(data.listing);
+      } else {
+        setCompareError(data.error ?? "Could not fetch listing — try entering details manually below.");
+      }
+    } catch {
+      setCompareError("Network error.");
+    } finally {
+      setCompareLoading(false);
+    }
+  }
+
+  function exitCompare() {
+    setCompareMode(false);
+    setCompareUrl("");
+    setCompareError(null);
+    setCompareProperty(null);
   }
 
   function handleManualSubmit(e: React.FormEvent) {
@@ -245,23 +283,64 @@ export default function Home() {
             )}
 
             {/* Toolbar — hidden when printing */}
-            <div className="flex items-center justify-between mb-4 print:hidden">
+            <div className="flex items-center justify-between mb-4 print:hidden flex-wrap gap-2">
               <button
-                onClick={() => { setProperty(null); setUrl(""); setError(null); setWarning(null); setAppliedRent(null); setAppliedNightly(null); }}
+                onClick={() => { setProperty(null); setUrl(""); setError(null); setWarning(null); setAppliedRent(null); setAppliedNightly(null); exitCompare(); }}
                 className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1"
               >
                 ← Analyze another property
               </button>
-              <button
-                onClick={() => window.print()}
-                className="flex items-center gap-2 text-sm font-semibold text-slate-600 border border-slate-300 rounded-xl px-4 py-2 hover:bg-slate-50 transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                </svg>
-                Save as PDF
-              </button>
+              <div className="flex items-center gap-2">
+                {compareProperty ? (
+                  <button
+                    onClick={exitCompare}
+                    className="text-sm font-semibold text-violet-600 border border-violet-200 rounded-xl px-4 py-2 hover:bg-violet-50 transition-colors"
+                  >
+                    ✕ Exit comparison
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setCompareMode(v => !v)}
+                    className={`text-sm font-semibold border rounded-xl px-4 py-2 transition-colors ${compareMode ? "text-violet-600 border-violet-300 bg-violet-50" : "text-slate-600 border-slate-300 hover:bg-slate-50"}`}
+                  >
+                    ⇌ Compare
+                  </button>
+                )}
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-2 text-sm font-semibold text-slate-600 border border-slate-300 rounded-xl px-4 py-2 hover:bg-slate-50 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                  </svg>
+                  Save as PDF
+                </button>
+              </div>
             </div>
+
+            {/* Compare input bar */}
+            {compareMode && !compareProperty && (
+              <div className="mb-4 bg-violet-50 border border-violet-200 rounded-2xl p-4 print:hidden">
+                <p className="text-sm font-semibold text-violet-800 mb-3">⇌ Compare with a second property</p>
+                <form onSubmit={handleCompare} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={compareUrl}
+                    onChange={e => setCompareUrl(e.target.value)}
+                    placeholder="Paste a realtor.ca URL…"
+                    className="flex-1 border border-violet-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={compareLoading || !compareUrl.trim()}
+                    className="bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 text-white font-semibold text-sm px-4 py-2 rounded-xl transition-colors whitespace-nowrap"
+                  >
+                    {compareLoading ? "Loading…" : "Load →"}
+                  </button>
+                </form>
+                {compareError && <p className="text-xs text-red-600 mt-2">⚠️ {compareError}</p>}
+              </div>
+            )}
 
             <PropertyCard property={property} />
 
@@ -286,12 +365,16 @@ export default function Home() {
               />
             </div>
 
-            <ScenarioTabs
-              property={property}
-              externalRent={appliedRent}
-              externalNightly={appliedNightly}
-              onClearRent={() => setAppliedRent(null)}
-            />
+            {compareProperty ? (
+              <CompareView propertyA={property} propertyB={compareProperty} />
+            ) : (
+              <ScenarioTabs
+                property={property}
+                externalRent={appliedRent}
+                externalNightly={appliedNightly}
+                onClearRent={() => setAppliedRent(null)}
+              />
+            )}
 
             <div className="mt-8 bg-slate-100 rounded-xl p-4 text-xs text-slate-500 text-center print:mt-4">
               <strong>Disclaimer:</strong> This tool uses estimated market defaults and should not be relied on as professional financial or investment advice.
