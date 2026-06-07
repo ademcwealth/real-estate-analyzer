@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SaleRecord, SalesHistoryResult } from "@/types";
-
-const CHROME_PATH =
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+import { launchBrowser } from "@/lib/puppeteer";
 
 function buildHonestDoorUrl(address: string, city: string, province: string): string {
   // Strip city/province/postal from the address string to get just the street part
@@ -151,17 +149,7 @@ export async function GET(req: NextRequest) {
 
     const hdUrl = buildHonestDoorUrl(address, city, province);
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const puppeteer = require("puppeteer-core");
-    browser = await puppeteer.launch({
-      executablePath: CHROME_PATH,
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-      ],
-    });
+    browser = await launchBrowser();
 
     const page = await browser.newPage();
     await page.setUserAgent(

@@ -7,6 +7,7 @@ import ScenarioTabs from "@/components/ScenarioTabs";
 import RentalComps from "@/components/RentalComps";
 import STRComps from "@/components/STRComps";
 import SalesHistory from "@/components/SalesHistory";
+import RecentProperties, { saveToHistory } from "@/components/RecentProperties";
 
 const PLACEHOLDER_URL = "https://www.realtor.ca/real-estate/27165448/10709-74-avenue-nw-edmonton";
 
@@ -51,6 +52,7 @@ export default function Home() {
       if (res.ok && data.listing) {
         if (data.warning) setWarning(data.warning);
         setProperty(data.listing);
+        saveToHistory(data.listing);
       } else if (data.manualEntry) {
         // Pre-fill the manual form with any address hint extracted from the URL
         if (data.addressHint) {
@@ -72,6 +74,7 @@ export default function Home() {
     e.preventDefault();
     if (manualProp.address && manualProp.price > 0) {
       setProperty(manualProp);
+      saveToHistory(manualProp);
       setManualMode(false);
     }
   }
@@ -138,6 +141,10 @@ export default function Home() {
                 Or enter property details manually →
               </button>
             </div>
+
+            <RecentProperties
+              onSelect={(p) => { setProperty(p); setError(null); setWarning(null); }}
+            />
           </div>
         )}
 
