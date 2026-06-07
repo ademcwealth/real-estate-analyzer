@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import type { PropertyListing } from "@/types";
 import { fetchEdmontonAssessedValue } from "@/lib/edmonton-assessment";
 
-const CHROME_PATH =
-  process.env.CHROME_PATH ??
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const PROVINCE_CODES: Record<string, string> = {
+  Alberta: "AB", "British Columbia": "BC", Ontario: "ON", Quebec: "QC",
+  Manitoba: "MB", Saskatchewan: "SK", "Nova Scotia": "NS",
+  "New Brunswick": "NB", "Prince Edward Island": "PE", Newfoundland: "NL",
+};
 
 function extractListingId(url: string): string | null {
   const match = url.match(/\/real-estate\/(\d+)/);
@@ -27,117 +29,181 @@ function parseNum(s: string): number {
   return parseInt(s.replace(/[^0-9]/g, ""), 10) || 0;
 }
 
-async function scrapeWithPuppeteer(listingUrl: string): Promise<PropertyListing> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const puppeteer = require("puppeteer-core");
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  const browser = await puppeteer.launch({
-    executablePath: CHROME_PATH,
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-blink-features=AutomationControlled",
-    ],
-  });
-
+// Try to extract structured data from realtor.ca's embedded Next.js JSON blob
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseFromNextData(data: any, listingUrl: string): PropertyListing | null {
   try {
-    const page = await puppeteer.launch && browser.newPage
-      ? await browser.newPage()
-      : null;
-    if (!page) throw new Error("Could not open page");
+    // Walk common paths where realtor.ca stores listing data
+    const props =
+      data?.props?.pageProps?.listingData ??
+      data?.props?.pageProps?.listing ??
+      data?.props?.pageProps?.property ??
+      data?.props?.pageProps;
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    );
+    if (!props) return null;
 
-    await page.goto(listingUrl, { waitUntil: "networkidle2", timeout: 30000 });
-    // Extra wait for React hydration
-    await new Promise((r) => setTimeout(r, 2000));
+    const price =
+      props.ListPrice ?? props.listPrice ?? props.Price ?? props.price ?? 0;
+    const address =
+      props.Address?.AddressText ??
+      props.address?.fullAddress ??
+      props.StreetAddress ??
+      slugToAddress(listingUrl);
+    const bedrooms =
+      props.BedroomsTotal ?? props.Bedrooms ?? props.bedrooms ?? 3;
+    const bathrooms =
+      props.BathroomsTotal ?? props.Bathrooms ?? props.bathrooms ?? 2;
+    const sqft =
+      props.BuildingSizeInterior ?? props.SquareFootage ?? props.sqft ?? undefined;
+    const propertyType =
+      props.PropertyType ?? props.propertyType ?? props.BuildingType ?? "Residential";
+    const city =
+      props.Address?.City ?? props.city ?? "Edmonton";
+    const provinceFull =
+      props.Address?.ProvinceCode ?? props.Address?.Province ?? props.province ?? "Alberta";
+    const province = PROVINCE_CODES[provinceFull] ?? provinceFull ?? "AB";
+    const mlsNumber =
+      props.MlsNumber ?? props.mlsNumber ?? props.ListingKey ?? undefined;
+    const description =
+      props.PublicRemarks ?? props.description ?? props.Description ?? undefined;
 
-    const raw = await page.evaluate(() => {
-      const bodyText = document.body.innerText ?? "";
-      const title = document.title ?? "";
-      // H1 can have child spans without whitespace — collect them with spaces
-      const h1El = document.querySelector("h1");
-      const h1 = h1El
-        ? Array.from(h1El.childNodes)
-            .map((n) => n.textContent?.trim())
-            .filter(Boolean)
-            .join(", ")
-        : "";
-      return { bodyText, title, h1 };
-    });
-
-    // Check if listing no longer exists
-    if (raw.h1.toLowerCase().includes("no longer exists") || raw.h1.toLowerCase().includes("not found")) {
-      throw new Error("Listing no longer active");
-    }
-
-    const text = raw.bodyText;
-
-    // --- Price ---
-    const priceMatch = text.match(/\$([\d,]+)/);
-    const price = priceMatch ? parseNum(priceMatch[1]) : 0;
-
-    // --- Address: from H1 (normalise spacing) ---
-    const address = raw.h1.replace(/\s+/g, " ").trim() || slugToAddress(listingUrl);
-
-    // --- Bedrooms: "3 Bedrooms" or "3\nBedrooms" ---
-    const bedsMatch = text.match(/(\d+)\s*\n?\s*Bedrooms?/i);
-    const bedrooms = bedsMatch ? parseInt(bedsMatch[1]) : 3;
-
-    // --- Bathrooms: "2 Bathrooms" ---
-    const bathsMatch = text.match(/(\d+\.?\d*)\s*\n?\s*Bathrooms?/i);
-    const bathrooms = bathsMatch ? parseFloat(bathsMatch[1]) : 2;
-
-    // --- Square footage ---
-    const sqftMatch = text.match(/([\d,]+)\s*\n?\s*Square\s*Feet/i) ||
-      text.match(/Square\s+Footage\s+([\d,]+)/i) ||
-      text.match(/([\d,]+)\s*sqft/i);
-    const sqft = sqftMatch ? parseNum(sqftMatch[1]) : undefined;
-
-    // --- MLS number — matches e.g. E4490844, C1234567, X9876543 ---
-    const mlsMatch = text.match(/MLS[®°\s#]*Number[:\s]*([A-Z]\d{6,8})/i) ||
-      raw.title.match(/[-–]\s*([A-Z]\d{6,8})\s*\|/);
-    const mlsNumber = mlsMatch ? mlsMatch[1] : undefined;
-
-    // --- Property type ---
-    const typeMatch = text.match(/Property\s+Type\s*\n?\s*([^\n]+)/i);
-    const buildingMatch = text.match(/Building\s+Type\s*\n?\s*([^\n]+)/i);
-    const propertyType = typeMatch?.[1]?.trim() ?? buildingMatch?.[1]?.trim() ?? "Residential";
-
-    // --- City & province — extract from page title which is reliably formatted ---
-    // Title pattern: "For sale: 123 Main St, Edmonton, Alberta T5R1B7 - E4490844 | REALTOR.ca"
-    const titleCityMatch = raw.title.match(/,\s*([A-Za-z\s]+),\s*(Alberta|British Columbia|Ontario|Quebec|Manitoba|Saskatchewan|Nova Scotia|New Brunswick|Prince Edward Island|Newfoundland)\s+[A-Z]\d/i);
-    const PROVINCE_CODES: Record<string, string> = {
-      Alberta: "AB", "British Columbia": "BC", Ontario: "ON", Quebec: "QC",
-      Manitoba: "MB", Saskatchewan: "SK", "Nova Scotia": "NS",
-      "New Brunswick": "NB", "Prince Edward Island": "PE", Newfoundland: "NL",
-    };
-    const city = titleCityMatch?.[1]?.trim() ?? "Edmonton";
-    const provinceFull = titleCityMatch?.[2]?.trim() ?? "Alberta";
-    const province = PROVINCE_CODES[provinceFull] ?? "AB";
-
-    // --- Description ---
-    const descMatch = text.match(/Listing\s+Description\s*\n([\s\S]{50,600}?)(?:\n\n|\nProperty\s+Summary)/i);
-    const description = descMatch?.[1]?.trim().substring(0, 500);
+    if (!price && !address) return null;
 
     return {
-      address,
-      price,
-      bedrooms,
-      bathrooms,
-      sqft,
-      propertyType,
-      city,
-      province,
-      mlsNumber,
-      description,
+      address: String(address),
+      price: Number(price),
+      bedrooms: Number(bedrooms),
+      bathrooms: Number(bathrooms),
+      sqft: sqft ? Number(sqft) : undefined,
+      propertyType: String(propertyType),
+      city: String(city),
+      province: String(province).substring(0, 2).toUpperCase(),
+      mlsNumber: mlsNumber ? String(mlsNumber) : undefined,
+      description: description ? String(description).substring(0, 500) : undefined,
     };
-  } finally {
-    await browser.close();
+  } catch {
+    return null;
   }
+}
+
+function parseFromText(text: string, title: string, listingUrl: string): PropertyListing {
+  // --- Price ---
+  const priceMatch = text.match(/\$([\d,]+)/);
+  const price = priceMatch ? parseNum(priceMatch[1]) : 0;
+
+  // --- Address: slug from URL as best available source in plain HTML ---
+  const address = slugToAddress(listingUrl);
+
+  // --- Bedrooms ---
+  const bedsMatch = text.match(/(\d+)\s*Bedrooms?/i);
+  const bedrooms = bedsMatch ? parseInt(bedsMatch[1]) : 3;
+
+  // --- Bathrooms ---
+  const bathsMatch = text.match(/(\d+\.?\d*)\s*Bathrooms?/i);
+  const bathrooms = bathsMatch ? parseFloat(bathsMatch[1]) : 2;
+
+  // --- Square footage ---
+  const sqftMatch =
+    text.match(/([\d,]+)\s*Square\s*Feet/i) ||
+    text.match(/Square\s+Footage\s+([\d,]+)/i) ||
+    text.match(/([\d,]+)\s*sqft/i);
+  const sqft = sqftMatch ? parseNum(sqftMatch[1]) : undefined;
+
+  // --- MLS number ---
+  const mlsMatch =
+    text.match(/MLS[®°\s#]*Number[:\s]*([A-Z]\d{6,8})/i) ||
+    title.match(/[-–]\s*([A-Z]\d{6,8})\s*\|/);
+  const mlsNumber = mlsMatch ? mlsMatch[1] : undefined;
+
+  // --- Property type ---
+  const typeMatch = text.match(/Property\s+Type\s*[:\s]+([A-Za-z /]+?)(?:\s{2,}|$)/i);
+  const propertyType = typeMatch?.[1]?.trim() ?? "Residential";
+
+  // --- City & province from page title ---
+  // "For sale: 123 Main St, Edmonton, Alberta T5R1B7 - E4490844 | REALTOR.ca"
+  const titleCityMatch = title.match(
+    /,\s*([A-Za-z\s]+),\s*(Alberta|British Columbia|Ontario|Quebec|Manitoba|Saskatchewan|Nova Scotia|New Brunswick|Prince Edward Island|Newfoundland)\s+[A-Z]\d/i
+  );
+  const city = titleCityMatch?.[1]?.trim() ?? "Edmonton";
+  const provinceFull = titleCityMatch?.[2]?.trim() ?? "Alberta";
+  const province = PROVINCE_CODES[provinceFull] ?? "AB";
+
+  return {
+    address,
+    price,
+    bedrooms,
+    bathrooms,
+    sqft,
+    propertyType,
+    city,
+    province,
+    mlsNumber,
+    description: undefined,
+  };
+}
+
+async function scrapeWithFetch(listingUrl: string): Promise<PropertyListing> {
+  const res = await fetch(listingUrl, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
+      "Cache-Control": "no-cache",
+    },
+    // Vercel functions have a 10s default — give it up to 25s
+    signal: AbortSignal.timeout(25000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} from realtor.ca`);
+  }
+
+  const html = await res.text();
+
+  // Check for "no longer active" in raw HTML
+  if (
+    /listing[^<]*no longer (exists|available|active)/i.test(html) ||
+    /This listing is no longer/i.test(html)
+  ) {
+    throw new Error("Listing no longer active");
+  }
+
+  // --- Extract page title ---
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].replace(/\s+/g, " ").trim() : "";
+
+  // --- Try __NEXT_DATA__ blob first (realtor.ca is a Next.js app) ---
+  const nextDataMatch = html.match(
+    /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i
+  );
+  if (nextDataMatch) {
+    try {
+      const nextData = JSON.parse(nextDataMatch[1]);
+      const parsed = parseFromNextData(nextData, listingUrl);
+      if (parsed && (parsed.price > 0 || parsed.address)) return parsed;
+    } catch {
+      // fall through
+    }
+  }
+
+  // --- Fallback: strip HTML and apply regex patterns ---
+  const text = stripHtml(html);
+  return parseFromText(text, title, listingUrl);
 }
 
 export async function POST(req: NextRequest) {
@@ -165,7 +231,7 @@ export async function POST(req: NextRequest) {
     : `https://www.realtor.ca/real-estate/${listingId}`;
 
   try {
-    const listing = await scrapeWithPuppeteer(listingUrl);
+    const listing = await scrapeWithFetch(listingUrl);
 
     // Enrich with actual assessed value from Edmonton Open Data (best-effort)
     if (listing.city.toLowerCase().includes("edmonton")) {
@@ -178,7 +244,7 @@ export async function POST(req: NextRequest) {
         listing,
         partial: true,
         warning:
-          "Property loaded but price could not be read automatically — please confirm it below.",
+          "Property loaded but price could not be read automatically — please enter it below.",
       });
     }
 
@@ -201,8 +267,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
-        error:
-          "Could not fetch the listing automatically. Enter the details below.",
+        error: "Could not fetch the listing automatically. Enter the details below.",
         manualEntry: true,
         addressHint: slugToAddress(url),
       },
