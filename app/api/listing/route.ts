@@ -211,35 +211,69 @@ async function scrapeWithPuppeteer(listingUrl: string): Promise<PropertyListing>
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
+
+    // Override webdriver flag — Incapsula checks this
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => false });
+    });
+
     await page.setUserAgent(
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     );
-    // Block images/fonts/media to speed up load
+
+    // Block only heavy binary assets — keep JS and CSS so the page renders fully
     await page.setRequestInterception(true);
     page.on("request", (r: { resourceType: () => string; abort: () => void; continue: () => void }) => {
-      if (["image", "font", "media", "stylesheet"].includes(r.resourceType())) r.abort();
+      if (["image", "font", "media"].includes(r.resourceType())) r.abort();
       else r.continue();
     });
 
-    await page.goto(listingUrl, { waitUntil: "networkidle2", timeout: 30000 });
+    await page.goto(listingUrl, { waitUntil: "networkidle2", timeout: 35000 });
+    // Extra settle time for Incapsula challenge + React hydration
+    await new Promise((r) => setTimeout(r, 3000));
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { nextData, bodyText }: { nextData: any; bodyText: string } = await page.evaluate(() => {
-      const el = document.getElementById("__NEXT_DATA__");
-      let nextData = null;
-      try { nextData = el?.textContent ? JSON.parse(el.textContent) : null; } catch { /* ignore */ }
-      return { nextData, bodyText: document.body.innerText ?? "" };
-    });
+    const result: { nextData: any; bodyText: string; domPrice: number; title: string } =
+      await page.evaluate(() => {
+        // 1. __NEXT_DATA__ blob
+        const el = document.getElementById("__NEXT_DATA__");
+        let nextData = null;
+        try { nextData = el?.textContent ? JSON.parse(el.textContent) : null; } catch { /* ignore */ }
 
-    if (nextData) {
-      const parsed = parseFromNextData(nextData, listingUrl);
-      if (parsed && parsed.price > 0) return parsed;
+        // 2. Walk every text node looking for a realistic listing price ($50k–$50M)
+        let domPrice = 0;
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let node: Text | null;
+        while ((node = walker.nextNode() as Text | null) && domPrice === 0) {
+          const t = node.textContent?.trim() ?? "";
+          const m = t.match(/^\$\s*([\d,]+)$/);
+          if (m) {
+            const n = parseInt(m[1].replace(/,/g, ""), 10);
+            if (n >= 50000 && n <= 50_000_000) domPrice = n;
+          }
+        }
+
+        return {
+          nextData,
+          bodyText: document.body.innerText ?? "",
+          domPrice,
+          title: document.title,
+        };
+      });
+
+    // Try structured __NEXT_DATA__ first
+    if (result.nextData) {
+      const parsed = parseFromNextData(result.nextData, listingUrl);
+      if (parsed) {
+        if (parsed.price === 0 && result.domPrice > 0) parsed.price = result.domPrice;
+        if (parsed.price > 0) return parsed;
+      }
     }
 
-    // Fallback: parse visible text
-    const titleMatch = bodyText.match(/for sale[:\s]+(.+)/i);
-    const title = titleMatch?.[1] ?? "";
-    return parseFromText(bodyText, title, listingUrl);
+    // Use DOM price + text parsing as fallback
+    const listing = parseFromText(result.bodyText, result.title, listingUrl);
+    if (listing.price === 0 && result.domPrice > 0) listing.price = result.domPrice;
+    return listing;
   } finally {
     await browser.close().catch(() => {});
   }
