@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { PropertyListing } from "@/types";
 import { fetchEdmontonAssessedValue } from "@/lib/edmonton-assessment";
+import { launchBrowser } from "@/lib/puppeteer";
 
 const PROVINCE_CODES: Record<string, string> = {
   Alberta: "AB", "British Columbia": "BC", Ontario: "ON", Quebec: "QC",
@@ -206,6 +207,44 @@ async function scrapeWithFetch(listingUrl: string): Promise<PropertyListing> {
   return parseFromText(text, title, listingUrl);
 }
 
+async function scrapeWithPuppeteer(listingUrl: string): Promise<PropertyListing> {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    );
+    // Block images/fonts/media to speed up load
+    await page.setRequestInterception(true);
+    page.on("request", (r: { resourceType: () => string; abort: () => void; continue: () => void }) => {
+      if (["image", "font", "media", "stylesheet"].includes(r.resourceType())) r.abort();
+      else r.continue();
+    });
+
+    await page.goto(listingUrl, { waitUntil: "networkidle2", timeout: 30000 });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { nextData, bodyText }: { nextData: any; bodyText: string } = await page.evaluate(() => {
+      const el = document.getElementById("__NEXT_DATA__");
+      let nextData = null;
+      try { nextData = el?.textContent ? JSON.parse(el.textContent) : null; } catch { /* ignore */ }
+      return { nextData, bodyText: document.body.innerText ?? "" };
+    });
+
+    if (nextData) {
+      const parsed = parseFromNextData(nextData, listingUrl);
+      if (parsed && parsed.price > 0) return parsed;
+    }
+
+    // Fallback: parse visible text
+    const titleMatch = bodyText.match(/for sale[:\s]+(.+)/i);
+    const title = titleMatch?.[1] ?? "";
+    return parseFromText(bodyText, title, listingUrl);
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
 export async function POST(req: NextRequest) {
   const { url } = await req.json();
 
@@ -231,7 +270,17 @@ export async function POST(req: NextRequest) {
     : `https://www.realtor.ca/real-estate/${listingId}`;
 
   try {
-    const listing = await scrapeWithFetch(listingUrl);
+    let listing = await scrapeWithFetch(listingUrl);
+
+    // If plain fetch was blocked (Incapsula) and returned price=0, retry with Puppeteer
+    if (listing.price === 0) {
+      try {
+        const puppeteerListing = await scrapeWithPuppeteer(listingUrl);
+        if (puppeteerListing.price > 0) listing = puppeteerListing;
+      } catch {
+        // Puppeteer fallback failed — keep the fetch result, show price editor
+      }
+    }
 
     // Enrich with actual assessed value from Edmonton Open Data (best-effort)
     if (listing.city.toLowerCase().includes("edmonton")) {
