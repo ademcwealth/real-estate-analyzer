@@ -304,17 +304,7 @@ export async function POST(req: NextRequest) {
     : `https://www.realtor.ca/real-estate/${listingId}`;
 
   try {
-    let listing = await scrapeWithFetch(listingUrl);
-
-    // If plain fetch was blocked (Incapsula) and returned price=0, retry with Puppeteer
-    if (listing.price === 0) {
-      try {
-        const puppeteerListing = await scrapeWithPuppeteer(listingUrl);
-        if (puppeteerListing.price > 0) listing = puppeteerListing;
-      } catch {
-        // Puppeteer fallback failed — keep the fetch result, show price editor
-      }
-    }
+    const listing = await scrapeWithPuppeteer(listingUrl);
 
     // Enrich with actual assessed value from Edmonton Open Data (best-effort)
     if (listing.city.toLowerCase().includes("edmonton")) {
