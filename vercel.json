@@ -1,0 +1,15 @@
+{
+  "functions": {
+    "app/api/rentals/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "app/api/str-comps/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "app/api/listing/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}

@@ -44,6 +44,20 @@ function calcPct(arr: number[], p: number): number {
   return Math.round(s[lo] + (s[hi] - s[lo]) * (idx - lo));
 }
 
+// puppeteer-core v22+ throws on 4xx/5xx — catch and continue so the caller can try alternatives
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function safeGoto(page: any, url: string, opts: { waitUntil: string; timeout: number }) {
+  try {
+    await page.goto(url, opts);
+  } catch (err) {
+    if (err instanceof Error && /Unexpected status code|ERR_HTTP_RESPONSE_CODE/i.test(err.message)) {
+      return false;
+    }
+    throw err;
+  }
+  return true;
+}
+
 export async function GET(req: NextRequest) {
   let browser = null;
   try {
@@ -72,15 +86,30 @@ export async function GET(req: NextRequest) {
     checkout.setDate(checkout.getDate() + 7);
     const fmt = (d: Date) => d.toISOString().split("T")[0];
 
-    const searchUrl =
-      `https://www.airbnb.ca/s/${encodeURIComponent(city)}--${encodeURIComponent(province)}--Canada/homes` +
-      `?refinement_paths%5B%5D=%2Fhomes` +
-      `&room_types%5B%5D=Entire+home%2Fapt` +
-      `&min_bedrooms=${beds}&max_bedrooms=${beds}` +
-      `&checkin=${fmt(checkin)}&checkout=${fmt(checkout)}` +
+    const bboxParams =
       `&ne_lat=${neLat}&ne_lng=${neLng}&sw_lat=${swLat}&sw_lng=${swLng}`;
+    const stayParams =
+      `&checkin=${fmt(checkin)}&checkout=${fmt(checkout)}`;
+    const filterParams =
+      `?refinement_paths%5B%5D=%2Fhomes&room_types%5B%5D=Entire+home%2Fapt&min_bedrooms=${beds}&max_bedrooms=${beds}`;
 
-    await page.goto(searchUrl, { waitUntil: "networkidle2", timeout: 30000 });
+    // Try URL formats from most specific to least — Airbnb varies by region/IP
+    const searchUrls = [
+      `https://www.airbnb.ca/s/${encodeURIComponent(city)}--${encodeURIComponent(province)}--Canada/homes${filterParams}${stayParams}${bboxParams}`,
+      `https://www.airbnb.ca/s/${encodeURIComponent(city)}--Canada/homes${filterParams}${stayParams}${bboxParams}`,
+      `https://www.airbnb.ca/s/${encodeURIComponent(city)}/homes${filterParams}${stayParams}${bboxParams}`,
+      `https://www.airbnb.com/s/${encodeURIComponent(city)}--${encodeURIComponent(province)}--Canada/homes${filterParams}${stayParams}${bboxParams}`,
+    ];
+
+    let navigated = false;
+    for (const searchUrl of searchUrls) {
+      const ok = await safeGoto(page, searchUrl, { waitUntil: "networkidle2", timeout: 30000 });
+      if (ok) { navigated = true; break; }
+    }
+    if (!navigated) {
+      // All URLs failed — last attempt with no waitUntil restriction
+      await page.goto(searchUrls[0], { waitUntil: "load", timeout: 20000 }).catch(() => {});
+    }
     await new Promise((r) => setTimeout(r, 2000));
 
     const niobeListings: StrComp[] = await page.evaluate(() => {

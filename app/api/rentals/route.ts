@@ -127,6 +127,19 @@ async function runSearch(
   );
 }
 
+// puppeteer-core v22+ throws on 4xx/5xx status codes — catch and continue
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function safeGoto(page: any, url: string, opts: { waitUntil: string; timeout: number }) {
+  try {
+    await page.goto(url, opts);
+  } catch (err) {
+    if (err instanceof Error && /Unexpected status code|ERR_HTTP_RESPONSE_CODE/i.test(err.message)) {
+      return; // page may still have partial DOM — caller decides whether to continue
+    }
+    throw err;
+  }
+}
+
 export async function GET(req: NextRequest) {
   let browser = null;
   try {
@@ -160,20 +173,18 @@ export async function GET(req: NextRequest) {
       r.continue();
     });
 
-    await page.goto(`https://rentals.ca/${city.replace(/\s+/g, "-")}`, {
-      waitUntil: "networkidle2",
-      timeout: 25000,
-    });
-    await new Promise((r) => setTimeout(r, 1500));
-
-    if (!realHeaders["content-type"] && !realHeaders["x-csrf-token"]) {
-      // Headers not captured — page might have loaded without a GraphQL call
-      // Navigate to a beds-filtered URL to force one
-      await page.goto(
-        `https://rentals.ca/${city.replace(/\s+/g, "-")}?bd-mn=${beds}&bd-mx=${beds}`,
-        { waitUntil: "networkidle2", timeout: 20000 }
-      );
+    // Try multiple URL formats — rentals.ca city slugs vary and some return 404 from non-CA IPs
+    const citySlug = city.replace(/\s+/g, "-");
+    const candidateUrls = [
+      `https://rentals.ca/${citySlug}?bd-mn=${beds}&bd-mx=${beds}`,
+      `https://rentals.ca/${citySlug}-ab?bd-mn=${beds}&bd-mx=${beds}`,
+      `https://rentals.ca/${citySlug}`,
+      `https://rentals.ca/`,
+    ];
+    for (const navUrl of candidateUrls) {
+      await safeGoto(page, navUrl, { waitUntil: "networkidle2", timeout: 25000 });
       await new Promise((r) => setTimeout(r, 1500));
+      if (realHeaders["content-type"] || realHeaders["x-csrf-token"]) break;
     }
 
     // Search strategies: neighbourhood-first, expand to city as fallback
