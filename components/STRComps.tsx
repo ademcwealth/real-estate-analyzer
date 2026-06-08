@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PropertyListing } from "@/types";
-import type { StrCompsResult, StrComp } from "@/app/api/str-comps/route";
+import type { StrCompsResult } from "@/app/api/str-comps/route";
+type StrComp = StrCompsResult["comps"][number];
 
 interface Props {
   property: PropertyListing;
@@ -107,13 +108,17 @@ export default function STRComps({ property, onUseRevenue }: Props) {
         <div className="flex items-center gap-2">
           <span className="text-lg">🏖️</span>
           <div>
-            <h3 className="font-bold text-slate-900 text-sm">Live Airbnb Comps</h3>
+            <h3 className="font-bold text-slate-900 text-sm">
+              {data?.isEstimate ? "STR Market Estimates" : "Live Airbnb Comps"}
+            </h3>
             <p className="text-xs text-slate-400">
               {data
-                ? `${data.stats.count} active ${beds}-bed entire-home listings · ${data.searchArea}`
+                ? data.isEstimate
+                  ? `Market rate estimates · ${data.searchArea}`
+                  : `${data.stats.count} active ${beds}-bed entire-home listings · ${data.searchArea}`
                 : loading
-                ? `Fetching Airbnb listings for ${property.city}…`
-                : "Airbnb short-term rental market data"}
+                ? `Loading STR data for ${property.city}…`
+                : "Short-term rental market data"}
             </p>
           </div>
         </div>

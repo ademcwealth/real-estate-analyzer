@@ -1,17 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { launchBrowser } from "@/lib/puppeteer";
 
-// Listing types that represent entire rentable units (not rooms or shared spaces)
-const WHOLE_UNIT_TYPES = new Set([
-  "apartment", "basement", "town_house_community", "town_house",
-  "house", "multi_unit", "single_family_home", "condo",
-  "main_floor", "home_community", "fourplex", "duplex", "triplex",
-  "semi_detached", "detached",
-]);
-
-// Minimum reasonable monthly rent per bedroom count (filters out rooms-for-rent)
-const MIN_RENT_BY_BEDS: Record<number, number> = {
-  1: 750, 2: 1000, 3: 1200, 4: 1500, 5: 1800,
+// Kijiji location IDs for major Canadian cities (c37 = apartments/condos category)
+const KIJIJI_LOCATIONS: Record<string, string> = {
+  edmonton: "1700203",
+  calgary: "1700199",
+  "red deer": "1700283",
+  lethbridge: "1700282",
+  "fort mcmurray": "1700289",
+  "grande prairie": "1700288",
+  airdrie: "1700280",
+  "spruce grove": "1700285",
+  leduc: "1700281",
+  "st. albert": "1700284",
+  vancouver: "1700023",
+  victoria: "1700277",
+  kelowna: "1700228",
+  abbotsford: "1700225",
+  toronto: "1700273",
+  ottawa: "1700185",
+  hamilton: "1700212",
+  london: "1700214",
+  kingston: "1700269",
+  windsor: "1700216",
+  winnipeg: "1700192",
+  saskatoon: "1700286",
+  regina: "1700274",
+  halifax: "1700255",
 };
 
 export interface RentalComp {
@@ -36,27 +50,6 @@ export interface RentalCompsResult {
   beds: number;
 }
 
-async function geocodeNeighbourhood(
-  address: string
-): Promise<{ neighbourhood: string | null; city: string }> {
-  try {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&addressdetails=1&limit=1&countrycodes=ca`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "RE-Analyzer/1.0 (real-estate-investment-tool)" },
-      signal: AbortSignal.timeout(5000),
-    });
-    const results = await res.json();
-    if (!results?.length) return { neighbourhood: null, city: "Edmonton" };
-    const addr = results[0].address;
-    return {
-      neighbourhood: addr.suburb ?? addr.neighbourhood ?? addr.quarter ?? null,
-      city: addr.city ?? addr.town ?? addr.municipality ?? "Edmonton",
-    };
-  } catch {
-    return { neighbourhood: null, city: "Edmonton" };
-  }
-}
-
 function calcMedian(arr: number[]): number {
   const s = [...arr].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
@@ -71,187 +64,94 @@ function calcPercentile(arr: number[], p: number): number {
   return Math.round(s[lo] + (s[hi] - s[lo]) * (idx - lo));
 }
 
-const GQL = `query RentalListingSearch($first: PositiveInt, $place: PlaceInput!, $filters: RentalListingsConnectionFilterSet) {
-  rentalListings(first: $first, place: $place, filters: $filters) {
-    meta { totalCount }
-    edges {
-      node {
-        id type listingType rentRange bedsRange bathsRange sizeRange
-        address { cityName street neighbourhoodName postalCode }
-        floorPlans { beds baths sqft rent size }
-      }
-    }
-  }
-}`;
-
-/** Fire one GraphQL search via the Puppeteer page context */
-async function runSearch(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  page: any,
-  headers: Record<string, string>,
-  namedArea: string,
-  radiusM: number,
-  bedsFilter: number[]
-) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return page.evaluate(
-    async (
-      h: Record<string, string>,
-      gql: string,
-      na: string,
-      rm: number,
-      bf: number[]
-    ) => {
-      const body = {
-        operationName: "RentalListingSearch",
-        query: gql,
-        variables: {
-          first: 200,
-          place: { namedAreaDistance: { distance: rm, namedArea: na } },
-          filters: { beds: bf },
-        },
-      };
-      // Retry once on empty/bad body
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const res = await fetch("https://rentals.ca/graphql", {
-            method: "POST", headers: h, body: JSON.stringify(body),
-          });
-          const text = await res.text();
-          if (text && text.trim()) return JSON.parse(text);
-        } catch { /* ignore, retry */ }
-      }
-      return null; // both attempts failed — signal caller
-    },
-    headers, GQL, namedArea, radiusM, bedsFilter
-  );
-}
-
-// puppeteer-core v22+ throws on 4xx/5xx status codes — catch and continue
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function safeGoto(page: any, url: string, opts: { waitUntil: string; timeout: number }) {
-  try {
-    await page.goto(url, opts);
-  } catch (err) {
-    if (err instanceof Error && /Unexpected status code|ERR_HTTP_RESPONSE_CODE/i.test(err.message)) {
-      return; // page may still have partial DOM — caller decides whether to continue
-    }
-    throw err;
-  }
-}
+// Minimum reasonable monthly rent per bedroom count (filters rooms-for-rent)
+const MIN_RENT: Record<number, number> = { 1: 700, 2: 900, 3: 1100, 4: 1400, 5: 1700 };
 
 export async function GET(req: NextRequest) {
-  let browser = null;
   try {
     const { searchParams } = new URL(req.url);
-    const rawCity = searchParams.get("city") || "Edmonton";
+    const rawCity = (searchParams.get("city") || "Edmonton").trim();
     const beds = parseInt(searchParams.get("beds") || "3");
-    const address = searchParams.get("address") || "";
 
-    // Geocode to get neighbourhood (runs server-side, no Puppeteer needed)
-    const { neighbourhood, city: geocodedCity } = address
-      ? await geocodeNeighbourhood(address)
-      : { neighbourhood: null, city: rawCity };
+    const cityLower = rawCity.toLowerCase();
+    const citySlug = cityLower.replace(/\s+/g, "-");
+    const locationId = KIJIJI_LOCATIONS[cityLower];
 
-    const city = geocodedCity.toLowerCase();
-    const province = "ab";
+    const kijijiUrl = locationId
+      ? `https://www.kijiji.ca/b-apartments-condos/${citySlug}/c37l${locationId}`
+      : `https://www.kijiji.ca/b-apartments-condos/${citySlug}/c37`;
 
-    browser = await launchBrowser();
-
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    );
-
-    // Capture session headers from the page's own GraphQL request
-    let realHeaders: Record<string, string> = {};
-    await page.setRequestInterception(true);
-    page.on("request", (r: { url: () => string; method: () => string; headers: () => Record<string, string>; continue: () => void }) => {
-      if (r.url().includes("graphql") && r.method() === "POST") {
-        realHeaders = r.headers();
-      }
-      r.continue();
+    const res = await fetch(kijijiUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-CA,en;q=0.9",
+      },
+      signal: AbortSignal.timeout(12000),
     });
 
-    // Navigate to the homepage (always 200, not city-specific).
-    // City pages (rentals.ca/edmonton) return 404 from non-Canadian server IPs.
-    await safeGoto(page, "https://rentals.ca/", { waitUntil: "domcontentloaded", timeout: 15000 });
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // If homepage didn't trigger a GraphQL call, force one via a search URL
-    if (!realHeaders["content-type"] && !realHeaders["x-csrf-token"]) {
-      const citySlug = city.replace(/\s+/g, "-");
-      await safeGoto(page, `https://rentals.ca/${citySlug}?bd-mn=${beds}&bd-mx=${beds}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 12000,
-      });
-      await new Promise((r) => setTimeout(r, 1500));
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: `Rental data not available for ${rawCity}. Kijiji returned ${res.status}.` },
+        { status: 404 }
+      );
     }
 
-    // If we still have no session headers, fall back to minimal JSON headers —
-    // the rentals.ca GraphQL endpoint often works without CSRF for public listing queries
-    if (!realHeaders["content-type"]) {
-      realHeaders = { "content-type": "application/json", "accept": "application/json" };
-    }
+    const html = await res.text();
 
-    // Search strategies: neighbourhood-first, expand to city as fallback
-    const strategies: Array<{ namedArea: string; radiusM: number; label: string }> = [];
-    if (neighbourhood) {
-      strategies.push({ namedArea: `${neighbourhood}, ${city}, ${province}, ca`, radiusM: 3000, label: `${neighbourhood} (3 km)` });
-      strategies.push({ namedArea: `${neighbourhood}, ${city}, ${province}, ca`, radiusM: 5000, label: `${neighbourhood} (5 km)` });
+    // Kijiji embeds listing data as JSON-LD (schema.org)
+    const ldMatch = html.match(/type="application\/ld\+json">([\s\S]*?)<\/script>/);
+    if (!ldMatch) {
+      return NextResponse.json(
+        { error: `Could not parse rental listings for ${rawCity}.` },
+        { status: 404 }
+      );
     }
-    strategies.push({ namedArea: `${city}, ${province}, ca`, radiusM: 5000, label: `${city} (5 km)` });
-    strategies.push({ namedArea: `${city}, ${province}, ca`, radiusM: 15000, label: `${city} (15 km)` });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let rawResult: any = null;
-    let usedLabel = strategies[strategies.length - 1].label;
-
-    for (const strategy of strategies) {
-      const r = await runSearch(page, realHeaders, strategy.namedArea, strategy.radiusM, [beds]);
-      if (!r || r.errors) continue;
-      const count: number = r?.data?.rentalListings?.meta?.totalCount ?? 0;
-      rawResult = r;
-      usedLabel = strategy.label;
-      if (count >= 8) break; // good enough — stop expanding
+    let ldData: any;
+    try { ldData = JSON.parse(ldMatch[1]); } catch {
+      return NextResponse.json({ error: "Failed to parse Kijiji listing data." }, { status: 500 });
     }
 
-    const edges: Array<{
-      node: {
-        type: string; listingType: string;
-        rentRange: number[]; bedsRange: number[]; bathsRange: number[]; sizeRange: number[];
-        address: { cityName: string; street: string; neighbourhoodName: string | null; postalCode: string };
-        floorPlans: Array<{ beds: number; baths: number; sqft: number | null; rent: number; size: number | null }>;
-      };
-    }> = rawResult?.data?.rentalListings?.edges || [];
+    const items: Array<Record<string, unknown>> =
+      (ldData?.itemListElement ?? []).map((i: Record<string, unknown>) => i.item ?? i);
 
-    const minRent = MIN_RENT_BY_BEDS[beds] ?? beds * 400;
+    const minRent = MIN_RENT[beds] ?? beds * 380;
     const comps: RentalComp[] = [];
 
-    for (const { node } of edges) {
-      const listingType = node.listingType || "";
-      if (listingType.includes("room") || listingType.includes("shared")) continue;
-      const nodeType = node.type || "";
-      if (nodeType && !WHOLE_UNIT_TYPES.has(nodeType)) continue;
+    for (const item of items) {
+      const listingBeds = parseFloat(String(item.numberOfBedrooms ?? "0"));
+      if (Math.floor(listingBeds) !== beds) continue;
 
-      for (const fp of node.floorPlans) {
-        if (Math.floor(fp.beds) !== beds) continue;
-        if (fp.rent <= 0 || fp.rent < minRent) continue;
-        comps.push({
-          address: node.address.street || "Address not listed",
-          neighbourhood: node.address.neighbourhoodName,
-          beds: Math.floor(fp.beds),
-          baths: fp.baths,
-          sqft: fp.size || fp.sqft || null,
-          rent: fp.rent,
-          listingType,
-        });
-      }
+      const rent = parseFloat(String((item.offers as Record<string, unknown>)?.price ?? "0"));
+      if (!rent || rent < minRent || rent > 15000) continue;
+
+      const baths = parseFloat(String(item.numberOfBathroomsTotal ?? "1")) || 1;
+      const sqftVal = parseFloat(String((item.floorSize as Record<string, unknown>)?.value ?? "0"));
+      const sqft = sqftVal > 0 ? sqftVal : null;
+
+      const addrObj = item.address as Record<string, unknown> | string | undefined;
+      const address = typeof addrObj === "string"
+        ? addrObj
+        : (addrObj as Record<string, unknown>)?.streetAddress as string
+          ?? String(addrObj ?? "").split(",")[0]
+          ?? "Address not listed";
+
+      comps.push({
+        address: address.trim() || "Address not listed",
+        neighbourhood: null,
+        beds,
+        baths,
+        sqft,
+        rent,
+        listingType: String(item["@type"] ?? "apartment").toLowerCase(),
+      });
     }
 
     if (comps.length === 0) {
       return NextResponse.json(
-        { error: `No ${beds}-bedroom rental listings found near ${usedLabel}. Try a different bedroom count.` },
+        { error: `No ${beds}-bedroom listings found on Kijiji for ${rawCity}. Try a different bedroom count.` },
         { status: 404 }
       );
     }
@@ -268,18 +168,16 @@ export async function GET(req: NextRequest) {
         min: rents[0], max: rents[rents.length - 1],
         p25: calcPercentile(rents, 25), p75: calcPercentile(rents, 75),
       },
-      city, neighbourhood, searchArea: usedLabel, beds,
+      city: rawCity, neighbourhood: null,
+      searchArea: `${rawCity} (via Kijiji)`,
+      beds,
     } as RentalCompsResult);
 
   } catch (err) {
     console.error("[/api/rentals] error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unexpected server error — please try again" },
+      { error: err instanceof Error ? err.message : "Unexpected error — please try again" },
       { status: 500 }
     );
-  } finally {
-    if (browser) {
-      try { await browser.close(); } catch { /* ignore close errors */ }
-    }
   }
 }

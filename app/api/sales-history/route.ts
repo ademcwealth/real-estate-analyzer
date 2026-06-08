@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SaleRecord, SalesHistoryResult } from "@/types";
-import { launchBrowser } from "@/lib/puppeteer";
 
 function buildHonestDoorUrl(address: string, city: string, province: string): string {
-  // Strip city/province/postal from the address string to get just the street part
   const streetPart = address
     .replace(/,?\s*(edmonton|calgary|red deer|lethbridge|st\.?\s*albert|sherwood park|grande prairie|airdrie|spruce grove|leduc|alberta|british columbia|ontario|quebec|manitoba|saskatchewan|nova scotia|new brunswick|prince edward island|newfoundland|AB|BC|ON|QC|MB|SK|NS|NB|PE|NL)\b.*/gi, "")
     .trim();
@@ -17,11 +15,9 @@ function buildHonestDoorUrl(address: string, city: string, province: string): st
   const citySlug = city.toLowerCase().replace(/\s+/g, "-");
   const provSlug = province.toLowerCase();
 
-  // HonestDoor URL pattern: /property/{province}/{city}/{street}-{city}-{province}
   return `https://www.honestdoor.com/property/${provSlug}/${citySlug}/${streetSlug}-${citySlug}-${provSlug}`;
 }
 
-// Recursively search for an array that looks like sale/transaction records
 function findSalesData(obj: unknown, depth = 0): SaleRecord[] | null {
   if (depth > 8 || !obj || typeof obj !== "object") return null;
 
@@ -49,7 +45,6 @@ function findSalesData(obj: unknown, depth = 0): SaleRecord[] | null {
   }
 
   const o = obj as Record<string, unknown>;
-  // Check likely transaction key names first
   const txKeys = [
     "transactions", "sales", "soldHistory", "saleHistory",
     "propertyHistory", "transferHistory", "landTitleHistory", "priceHistory",
@@ -61,7 +56,6 @@ function findSalesData(obj: unknown, depth = 0): SaleRecord[] | null {
       if (result && result.length > 0) return result;
     }
   }
-  // General recursion through all values
   for (const val of Object.values(o)) {
     const found = findSalesData(val, depth + 1);
     if (found && found.length > 0) return found;
@@ -136,7 +130,6 @@ function findHdEstimate(obj: unknown, depth = 0): number | null {
 }
 
 export async function GET(req: NextRequest) {
-  let browser = null;
   try {
     const { searchParams } = new URL(req.url);
     const address = searchParams.get("address") ?? "";
@@ -149,79 +142,52 @@ export async function GET(req: NextRequest) {
 
     const hdUrl = buildHonestDoorUrl(address, city, province);
 
-    browser = await launchBrowser();
-
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    );
-    // Suppress images/fonts to speed up load
-    await page.setRequestInterception(true);
-    page.on("request", (r: { resourceType: () => string; abort: () => void; continue: () => void }) => {
-      if (["image", "font", "media"].includes(r.resourceType())) r.abort();
-      else r.continue();
+    const res = await fetch(hdUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-CA,en;q=0.9",
+      },
+      signal: AbortSignal.timeout(8000),
     });
 
-    await page.goto(hdUrl, { waitUntil: "networkidle2", timeout: 30000 });
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { nextData, bodyText }: { nextData: any; bodyText: string } = await page.evaluate(() => {
-      const el = document.getElementById("__NEXT_DATA__");
-      let nextData = null;
-      try { nextData = el?.textContent ? JSON.parse(el.textContent) : null; } catch { /* ignore */ }
-      return { nextData, bodyText: document.body.innerText ?? "" };
-    });
-
-    // Check if this looks like a real property page (not 404 or home)
-    const isPropertyPage =
-      !bodyText.toLowerCase().includes("page not found") &&
-      !bodyText.toLowerCase().includes("no results") &&
-      (bodyText.includes("Sold") || bodyText.includes("Transaction") ||
-       bodyText.includes("HonestDoor Price") || bodyText.includes("assessed"));
-
-    if (!isPropertyPage) {
-      // Return empty — address didn't match a HonestDoor listing
+    if (!res.ok) {
       return NextResponse.json({ sales: [], hdEstimate: null, address } satisfies SalesHistoryResult);
     }
 
+    const html = await res.text();
+
+    // HonestDoor is a Next.js app — try __NEXT_DATA__ first
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     let sales: SaleRecord[] = [];
     let hdEstimate: number | null = null;
 
-    if (nextData) {
-      sales = findSalesData(nextData) ?? [];
-      hdEstimate = findHdEstimate(nextData);
+    if (nextDataMatch) {
+      try {
+        const nextData = JSON.parse(nextDataMatch[1]);
+        // Only worth searching if pageProps has content (not a client-side shell)
+        const pageProps = nextData?.props?.pageProps;
+        if (pageProps && Object.keys(pageProps).length > 2) {
+          sales = findSalesData(nextData) ?? [];
+          hdEstimate = findHdEstimate(nextData);
+        }
+      } catch { /* ignore parse errors */ }
     }
 
-    // DOM text fallback: extract "Sold $X,XXX,XXX — Month YYYY" patterns
-    if (sales.length === 0 && bodyText) {
+    // Text fallback: "Sold $X,XXX,XXX — Month YYYY"
+    if (sales.length === 0) {
+      const bodyText = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
       const soldPattern = /sold[^$\n]*\$([\d,]+)[^\n]*?((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{4}-\d{2}-\d{2})/gi;
       let m: RegExpExecArray | null;
       while ((m = soldPattern.exec(bodyText)) !== null) {
         const price = parseInt(m[1].replace(/,/g, ""), 10);
-        if (price > 50000) {
-          sales.push({ date: m[2].trim(), price });
-        }
-      }
-    }
-
-    // Fallback: look for HD estimate in visible text
-    if (!hdEstimate) {
-      const estimateMatch = bodyText.match(/honestdoor\s+price[^\d$]*\$([\d,]+)/i);
-      if (estimateMatch) {
-        const n = parseInt(estimateMatch[1].replace(/,/g, ""), 10);
-        if (n > 50000) hdEstimate = n;
+        if (price > 50000) sales.push({ date: m[2].trim(), price });
       }
     }
 
     return NextResponse.json({ sales, hdEstimate, address } satisfies SalesHistoryResult);
   } catch (err) {
     console.error("[/api/sales-history]", err);
-    // Return empty rather than 500 — this is best-effort enrichment
     return NextResponse.json({ sales: [], hdEstimate: null, address: "" } satisfies SalesHistoryResult);
-  } finally {
-    if (browser) {
-      try { await browser.close(); } catch { /* ignore */ }
-    }
   }
 }
