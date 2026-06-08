@@ -93,24 +93,18 @@ export async function GET(req: NextRequest) {
     const filterParams =
       `?refinement_paths%5B%5D=%2Fhomes&room_types%5B%5D=Entire+home%2Fapt&min_bedrooms=${beds}&max_bedrooms=${beds}`;
 
-    // Try URL formats from most specific to least — Airbnb varies by region/IP
+    // Try two URL formats — domcontentloaded is much faster than networkidle2
+    // and still gives us the embedded JSON data we need
     const searchUrls = [
       `https://www.airbnb.ca/s/${encodeURIComponent(city)}--${encodeURIComponent(province)}--Canada/homes${filterParams}${stayParams}${bboxParams}`,
       `https://www.airbnb.ca/s/${encodeURIComponent(city)}--Canada/homes${filterParams}${stayParams}${bboxParams}`,
-      `https://www.airbnb.ca/s/${encodeURIComponent(city)}/homes${filterParams}${stayParams}${bboxParams}`,
-      `https://www.airbnb.com/s/${encodeURIComponent(city)}--${encodeURIComponent(province)}--Canada/homes${filterParams}${stayParams}${bboxParams}`,
     ];
 
-    let navigated = false;
     for (const searchUrl of searchUrls) {
-      const ok = await safeGoto(page, searchUrl, { waitUntil: "networkidle2", timeout: 30000 });
-      if (ok) { navigated = true; break; }
+      const ok = await safeGoto(page, searchUrl, { waitUntil: "domcontentloaded", timeout: 18000 });
+      if (ok) break;
     }
-    if (!navigated) {
-      // All URLs failed — last attempt with no waitUntil restriction
-      await page.goto(searchUrls[0], { waitUntil: "load", timeout: 20000 }).catch(() => {});
-    }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 3000));
 
     const niobeListings: StrComp[] = await page.evaluate(() => {
       const scripts = Array.from(document.querySelectorAll("script"));

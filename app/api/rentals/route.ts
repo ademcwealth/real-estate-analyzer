@@ -173,18 +173,25 @@ export async function GET(req: NextRequest) {
       r.continue();
     });
 
-    // Try multiple URL formats — rentals.ca city slugs vary and some return 404 from non-CA IPs
-    const citySlug = city.replace(/\s+/g, "-");
-    const candidateUrls = [
-      `https://rentals.ca/${citySlug}?bd-mn=${beds}&bd-mx=${beds}`,
-      `https://rentals.ca/${citySlug}-ab?bd-mn=${beds}&bd-mx=${beds}`,
-      `https://rentals.ca/${citySlug}`,
-      `https://rentals.ca/`,
-    ];
-    for (const navUrl of candidateUrls) {
-      await safeGoto(page, navUrl, { waitUntil: "networkidle2", timeout: 25000 });
+    // Navigate to the homepage (always 200, not city-specific).
+    // City pages (rentals.ca/edmonton) return 404 from non-Canadian server IPs.
+    await safeGoto(page, "https://rentals.ca/", { waitUntil: "domcontentloaded", timeout: 15000 });
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // If homepage didn't trigger a GraphQL call, force one via a search URL
+    if (!realHeaders["content-type"] && !realHeaders["x-csrf-token"]) {
+      const citySlug = city.replace(/\s+/g, "-");
+      await safeGoto(page, `https://rentals.ca/${citySlug}?bd-mn=${beds}&bd-mx=${beds}`, {
+        waitUntil: "domcontentloaded",
+        timeout: 12000,
+      });
       await new Promise((r) => setTimeout(r, 1500));
-      if (realHeaders["content-type"] || realHeaders["x-csrf-token"]) break;
+    }
+
+    // If we still have no session headers, fall back to minimal JSON headers —
+    // the rentals.ca GraphQL endpoint often works without CSRF for public listing queries
+    if (!realHeaders["content-type"]) {
+      realHeaders = { "content-type": "application/json", "accept": "application/json" };
     }
 
     // Search strategies: neighbourhood-first, expand to city as fallback
